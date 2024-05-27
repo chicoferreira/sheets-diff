@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
       - RUST_LOG=info
       - SPREADSHEET_ID=${SPREADSHEET_ID}
