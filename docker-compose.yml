@@ -1,0 +1,12 @@
+services:
+  sheets-diff:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - RUST_LOG=info
+      - SPREADSHEET_ID=${SPREADSHEET_ID}
+      - RANGE=${RANGE}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+    ports:
+      - 35927:35927
