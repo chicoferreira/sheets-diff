@@ -6,7 +6,7 @@ use anyhow::Context;
 use google_sheets4 as sheets4;
 use google_sheets4::hyper::client::HttpConnector;
 use google_sheets4::hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
-use log::{info, warn};
+use log::{debug, info, warn};
 use serde_json::Value;
 use sheets4::oauth2::{self, InstalledFlowAuthenticator, InstalledFlowReturnMethod};
 use sheets4::Sheets;
@@ -46,6 +46,7 @@ async fn tick(hub: &SheetsClient,
               ids: &HashMap<String, String>,
               previous_data: &SheetsContent) -> anyhow::Result<SheetsContent> {
     let new_data: SheetsContent = get_sheet_values(&hub, &spreadsheet_id, &range).await?;
+    debug!("New data: {}", serde_json::to_string(&new_data)?);
     for (new_row, old_row) in new_data.iter().zip(previous_data.iter()) {
         if new_row != old_row {
             info!("New row difference found at {:?}", serde_json::to_string(new_row));
