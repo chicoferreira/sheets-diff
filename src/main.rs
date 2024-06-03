@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::iter::Iterator;
+use std::time::Duration;
 
 use anyhow::Context;
 use google_sheets4 as sheets4;
+use google_sheets4::hyper::Client;
 use google_sheets4::hyper::client::HttpConnector;
 use google_sheets4::hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use log::{debug, info, warn};
@@ -18,7 +20,7 @@ type SheetsContent = Vec<Vec<Value>>;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
-    
+
     let hub = authenticate("client_secret.json").await?;
     let spreadsheet_id = std::env::var("SPREADSHEET_ID").context("SPREADSHEET_ID not found in env")?;
     let range = std::env::var("RANGE").context("RANGE not found in env")?;
@@ -30,7 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut current_data = get_sheet_values(&hub, &spreadsheet_id, &range).await?;
     info!("Starting loop");
     loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
 
         match tick(&hub, &spreadsheet_id, &range, &webhook_url, &ids, &current_data).await {
             Ok(new_data) => current_data = new_data,
@@ -82,7 +84,10 @@ fn load_ids(ids_path: &str) -> HashMap<String, String> {
 }
 
 async fn get_sheet_values(sheets: &SheetsClient, spreadsheet_id: &str, range: &str) -> anyhow::Result<SheetsContent> {
-    let response = sheets.spreadsheets().values_get(spreadsheet_id, range).doit().await?;
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        sheets.spreadsheets().values_get(spreadsheet_id, range).doit(),
+    ).await.context("The request timed out.")??;
     let values = response.1.values.ok_or("No data found").map_err(anyhow::Error::msg)?;
     Ok(values)
 }
@@ -100,6 +105,6 @@ async fn authenticate(client_secret_file_path: &str) -> Result<SheetsClient, Box
         .enable_http1()
         .enable_http2()
         .build();
-    let hub = Sheets::new(hyper::Client::builder().build(connector), auth);
+    let hub = Sheets::new(Client::builder().build(connector), auth);
     Ok(hub)
 }
