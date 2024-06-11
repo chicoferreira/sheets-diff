@@ -42,7 +42,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         match tick(&hub, &spreadsheet_id, &range, &webhook_url, &ids, &current_data).await {
             Ok(new_data) => current_data = new_data,
-            Err(e) => warn!("{:?}", e),
+            Err(e) => {
+                warn!("{:?}", e);
+                send_webhook_message(&webhook_url, format!("Some error happened: {}", e.to_string())).await.unwrap();
+            }
         }
     }
 }
