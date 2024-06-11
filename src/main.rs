@@ -9,6 +9,7 @@ use google_sheets4::hyper::Client;
 use google_sheets4::hyper::client::HttpConnector;
 use google_sheets4::hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use log::{debug, info, warn};
+use reqwest::Response;
 use serde_json::Value;
 use sheets4::oauth2::{self, InstalledFlowAuthenticator, InstalledFlowReturnMethod};
 use sheets4::Sheets;
@@ -30,7 +31,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     info!("Loaded ids: {:?}", ids);
 
     let mut current_data = get_sheet_values(&hub, &spreadsheet_id, &range).await?;
+    info!("Initial data: {}", serde_json::to_string(&current_data)?);
     info!("Starting loop");
+    send_webhook_message(&webhook_url, format!("Bot started ({} custom ids, {} lines in sheet)",
+                                               ids.len().to_string(),
+                                               current_data.len())).await?;
+
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -63,13 +69,17 @@ async fn tick(hub: &SheetsClient,
 
             let content = format!("{}{}", extra, content);
 
-            reqwest::Client::new()
-                .post(webhook_url)
-                .json(&serde_json::json!({"content": content}))
-                .send().await?;
+            send_webhook_message(webhook_url, &content).await?;
         }
     }
     Ok(new_data)
+}
+
+async fn send_webhook_message<S: Into<String>>(webhook_url: &str, content: S) -> anyhow::Result<Response> {
+    reqwest::Client::new()
+        .post(webhook_url)
+        .json(&serde_json::json!({"content": content.into()}))
+        .send().await.context("Failed to send webhook message")
 }
 
 fn load_ids(ids_path: &str) -> HashMap<String, String> {
