@@ -47,7 +47,7 @@ async fn tick(hub: &SheetsClient,
               webhook_url: &str,
               ids: &HashMap<String, String>,
               previous_data: &SheetsContent) -> anyhow::Result<SheetsContent> {
-    let new_data: SheetsContent = get_sheet_values(&hub, &spreadsheet_id, &range).await?;
+    let new_data: SheetsContent = get_sheet_values_timeout(&hub, &spreadsheet_id, &range).await?;
     debug!("New data: {}", serde_json::to_string(&new_data)?);
     for (new_row, old_row) in new_data.iter().zip(previous_data.iter()) {
         if new_row != old_row {
@@ -84,12 +84,16 @@ fn load_ids(ids_path: &str) -> HashMap<String, String> {
 }
 
 async fn get_sheet_values(sheets: &SheetsClient, spreadsheet_id: &str, range: &str) -> anyhow::Result<SheetsContent> {
-    let response = tokio::time::timeout(
-        Duration::from_secs(5),
-        sheets.spreadsheets().values_get(spreadsheet_id, range).doit(),
-    ).await.context("The request timed out.")??;
+    let response = sheets.spreadsheets().values_get(spreadsheet_id, range).doit().await?;
     let values = response.1.values.ok_or("No data found").map_err(anyhow::Error::msg)?;
     Ok(values)
+}
+
+async fn get_sheet_values_timeout(sheets: &SheetsClient, spreadsheet_id: &str, range: &str) -> anyhow::Result<SheetsContent> {
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        get_sheet_values(sheets, spreadsheet_id, range),
+    ).await.context("The request timed out.")?
 }
 
 async fn authenticate(client_secret_file_path: &str) -> Result<SheetsClient, Box<dyn Error>> {
