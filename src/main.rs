@@ -8,7 +8,7 @@ use google_sheets4 as sheets4;
 use google_sheets4::hyper::Client;
 use google_sheets4::hyper::client::HttpConnector;
 use google_sheets4::hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use reqwest::Response;
 use serde_json::Value;
 use sheets4::oauth2::{self, InstalledFlowAuthenticator, InstalledFlowReturnMethod};
@@ -37,17 +37,34 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                ids.len().to_string(),
                                                current_data.len())).await?;
 
+    let mut last_error_time: Option<std::time::Instant> = None;
+
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         match tick(&hub, &spreadsheet_id, &range, &webhook_url, &ids, &current_data).await {
             Ok(new_data) => current_data = new_data,
-            Err(e) => {
-                warn!("{:?}", e);
-                send_webhook_message(&webhook_url, format!("Some error happened: {}", e.to_string())).await.unwrap();
+            Err(AppError::GoogleAPI(e)) => {
+                error!("{:?}", e);
+                if last_error_time.map_or(true, |t| t.elapsed().as_secs() > 60 * 10) {
+                    last_error_time = Some(std::time::Instant::now());
+                    let _ = send_webhook_message(&webhook_url, "Google API Error happened. Check console for more information".to_string()).await;
+                }
             }
+            Err(AppError::Timeout) => warn!("Request timed out"),
+            Err(AppError::Other(e)) => error!("{:?}", e),
         }
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+enum AppError {
+    #[error("Google API error: {0}")]
+    GoogleAPI(#[from] sheets4::Error),
+    #[error("Request timed out")]
+    Timeout,
+    #[error("Unknown error: {0}")]
+    Other(#[from] anyhow::Error),
 }
 
 async fn tick(hub: &SheetsClient,
@@ -55,9 +72,9 @@ async fn tick(hub: &SheetsClient,
               range: &str,
               webhook_url: &str,
               ids: &HashMap<String, String>,
-              previous_data: &SheetsContent) -> anyhow::Result<SheetsContent> {
+              previous_data: &SheetsContent) -> Result<SheetsContent, AppError> {
     let new_data: SheetsContent = get_sheet_values_timeout(&hub, &spreadsheet_id, &range).await?;
-    debug!("New data: {}", serde_json::to_string(&new_data)?);
+    debug!("New data: {}", serde_json::to_string(&new_data).context("Failed to deserialize new data")?);
     for (new_row, old_row) in new_data.iter().zip(previous_data.iter()) {
         if new_row != old_row {
             info!("New row difference found at {:?}", serde_json::to_string(new_row));
@@ -96,17 +113,17 @@ fn load_ids(ids_path: &str) -> HashMap<String, String> {
     ).unwrap_or_default()
 }
 
-async fn get_sheet_values(sheets: &SheetsClient, spreadsheet_id: &str, range: &str) -> anyhow::Result<SheetsContent> {
+async fn get_sheet_values(sheets: &SheetsClient, spreadsheet_id: &str, range: &str) -> Result<SheetsContent, AppError> {
     let response = sheets.spreadsheets().values_get(spreadsheet_id, range).doit().await?;
     let values = response.1.values.ok_or("No data found").map_err(anyhow::Error::msg)?;
     Ok(values)
 }
 
-async fn get_sheet_values_timeout(sheets: &SheetsClient, spreadsheet_id: &str, range: &str) -> anyhow::Result<SheetsContent> {
+async fn get_sheet_values_timeout(sheets: &SheetsClient, spreadsheet_id: &str, range: &str) -> Result<SheetsContent, AppError> {
     tokio::time::timeout(
         Duration::from_secs(5),
         get_sheet_values(sheets, spreadsheet_id, range),
-    ).await.context("The request timed out.")?
+    ).await.map_err(|_| AppError::Timeout)?
 }
 
 async fn authenticate(client_secret_file_path: &str) -> Result<SheetsClient, Box<dyn Error>> {
